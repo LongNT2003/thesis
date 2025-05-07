@@ -62,15 +62,18 @@ def generate_review_table(root_dir, incorrect_ratio=0.2, existing_file=None):
         data[i][2] = "Incorrect"
 
     # Lưu vào DataFrame
-    df = pd.DataFrame(data, columns=["product", "review", "label_correct"])
-    return df
+    df_result = pd.DataFrame(data, columns=["product", "review", "label_correct"])
+    df_result = df_result.drop_duplicates(subset=["product", "review"])
+
+    return df_result
 
 
 # Sử dụng hàm
-root_directory = "data/part8"  # Đường dẫn đến thư mục chứa dữ liệu
-output_file = "review_labels_part8.csv"
+root_directory = "data/part7"  # Đường dẫn đến thư mục chứa dữ liệu
+output_file = "review_labels_part7.csv"
 df_result = generate_review_table(
     root_directory, incorrect_ratio=0.0, existing_file=output_file
 )
 df_result.to_csv(output_file, index=False)
+
 print(f"Saved result to {output_file}")

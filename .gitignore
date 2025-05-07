@@ -1,3 +1,6 @@
 data
 documents
 venv
+val_data
+.env
+weights

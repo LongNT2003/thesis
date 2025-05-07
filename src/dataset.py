@@ -1,7 +1,6 @@
 import torch
 import os
 import random
-from torchvision import transforms
 from PIL import Image
 from collections import defaultdict
 import re
@@ -29,7 +28,7 @@ class TripletDataset(torch.utils.data.Dataset):
         root_dir,
         transform=None,
         sample_negatives="epoch",
-        limit=5000,
+        limit=-1,
         neg_only_reviews=True,
     ):
         """
@@ -38,7 +37,6 @@ class TripletDataset(torch.utils.data.Dataset):
         sample_negatives:
             - "batch" → Selects a random negative for each sample dynamically.
             - "epoch" → Assigns a negative at the start of each epoch.
-            - "fixed" → Precomputed negative samples from a CSV file.
         """
         self.root_dir = root_dir
         self.transform = transform
@@ -50,12 +48,15 @@ class TripletDataset(torch.utils.data.Dataset):
 
         # Read dataset structure
         for part_folder in os.listdir(root_dir):
-            if self.__len__() >= limit:
+            if self.__len__() >= limit and limit > 0:
                 break
             part_path = os.path.join(root_dir, part_folder)
             if not os.path.isdir(part_path) or not is_valid_part_format(part_folder):
                 continue
             for product_folder in os.listdir(part_path):
+                if self.__len__() >= limit and limit > 0:
+                    break
+
                 product_path = os.path.join(part_path, product_folder)
                 if os.path.isdir(product_path):
                     product_and_review = [
@@ -63,31 +64,39 @@ class TripletDataset(torch.utils.data.Dataset):
                         for img in os.listdir(product_path)
                     ]
                     if (
-                        len(product_and_review) >= 2
+                        len(product_and_review) < 2
                     ):  # Ensure at least an anchor-positive pair
-                        for i in product_and_review:
-                            positive = None
-                            anchor = None
-                            if os.path.isdir(i):  # review
-                                reviews = [
-                                    os.path.join(i, review_img)
-                                    for review_img in os.listdir(i)
-                                ]
-                                if len(reviews) == 0:
-                                    continue
-                                # Get only first review image if it have multiple reivews
-                                positive = reviews[0]
-                            elif is_image_file(i) and anchor is not None:
-                                anchor = i
+                        continue
 
-                            if positive is not None and anchor is not None:
-                                self.class_to_images[product_folder] = [
-                                    anchor,
-                                    positive,
-                                ]
-                                self.samples.append(
-                                    (anchor, positive, product_folder)
-                                )  # Anchor & positive
+                    positive = None
+                    anchor = None
+                    for i in product_and_review:
+                        if os.path.isdir(i):  # review
+                            reviews = [
+                                os.path.join(i, review_img)
+                                for review_img in os.listdir(i)
+                            ]
+                            if len(reviews) == 0:
+                                continue
+                            # Get only first review image if it have multiple reivews
+                            valid_review_imgs = [
+                                file for file in reviews if is_image_file(file)
+                            ]
+                            if len(valid_review_imgs) > 0:
+                                positive = valid_review_imgs[0]
+
+                        elif is_image_file(i) and anchor is None:
+                            anchor = i
+
+                        if positive is not None and anchor is not None:
+                            self.class_to_images[product_folder] = [
+                                anchor,
+                                positive,
+                            ]
+                            self.samples.append(
+                                (anchor, positive, product_folder)
+                            )  # Anchor & positive
+                            continue
 
         # Precompute negatives if needed
         if self.sample_negatives == "epoch":
@@ -144,3 +153,29 @@ class TripletDataset(torch.utils.data.Dataset):
         """Call this at the start of each epoch if using 'epoch' sampling."""
         if self.sample_negatives == "epoch":
             self.negative_map = self.assign_negatives()
+
+
+class EvalTripletDataset(TripletDataset):
+
+    def assign_negatives(self):
+        """
+        Gán các mẫu âm (negative samples) cho từng sản phẩm.
+
+        Mô tả:
+        - Duyệt qua danh sách các sản phẩm (`class_to_images`).
+        - Mỗi sản phẩm được gán với một sản phẩm khác làm mẫu âm (negative).
+        - Sử dụng kỹ thuật xoay vòng (circular indexing) để đảm bảo mỗi sản phẩm có một mẫu âm hợp lệ.
+
+        Returns:
+            dict: Bản đồ ánh xạ từ sản phẩm gốc sang mẫu âm.
+        """
+        negative_map = {}
+        product_list = list(self.class_to_images.keys())
+        total_products = len(product_list)
+
+        for idx, product_label in enumerate(self.class_to_images):
+            next_idx = (idx + 1) % total_products  # Xoay vòng danh sách
+            neg_reviews = product_list[next_idx]
+            negative_map[product_label] = self.class_to_images[neg_reviews][1]
+
+        return negative_map
